@@ -1,0 +1,6 @@
+[submodule "frontend"]
+	path = frontend
+	url = https://github.com/fc1g/kachenyatko-ui.git
+[submodule "backend"]
+	path = backend
+	url = https://github.com/fc1g/kachenyatko-backend.git
