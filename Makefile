@@ -5,10 +5,10 @@ dev:
 	COMPOSE_BAKE=true docker compose up --build 
 
 down:
-	docker compose down
+	docker compose down && clear
 
 down-volumes:
-	docker compose down -v
+	docker compose down -v && clear
 
 restart:
 	make down && make dev

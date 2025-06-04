@@ -1,3 +1,11 @@
+x-common-backend-build: &common-backend-build
+  context: ./backend
+  target: dev
+
+x-common-volumes: &common-volumes
+  - ./backend:/usr/src/app:cached
+  - /usr/src/app/node_modules
+
 services:
   web:
     image: nginx
@@ -7,7 +15,24 @@ services:
     ports:
       - 80:80
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - 5672:5672
+      - 15672:15672
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'status']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
 
   database:
     image: postgres:16
@@ -15,8 +40,10 @@ services:
     container_name: postgres
     restart: always
     shm_size: 128mb
-    env_file:
-      - ./backend/libs/common/src/database/.env.local
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -25,27 +52,84 @@ services:
     container_name: pgadmin
     restart: always
     environment:
-      - PGADMIN_DEFAULT_EMAIL=pgadmin@pgadmin.com
-      - PGADMIN_DEFAULT_PASSWORD=pgadmin
+      PGADMIN_DEFAULT_EMAIL: pgadmin@pgadmin.com
+      PGADMIN_DEFAULT_PASSWORD: pgadmin
     ports:
-      - 5050:5050
+      - 5050:80
+
+  notifications:
+    build:
+      <<: *common-backend-build
+      dockerfile: ./apps/notifications/Dockerfile
+    hostname: notifications
+    container_name: notifications_service
+    env_file:
+      - ./backend/apps/notifications/.env.development.local
+    volumes: *common-volumes
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3005/']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
-      - database
+      database:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+  auth:
+    build:
+      <<: *common-backend-build
+      dockerfile: ./apps/auth/Dockerfile
+    hostname: auth
+    container_name: auth_service
+    env_file:
+      - ./backend/apps/auth/.env.development.local
+    volumes: *common-volumes
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3002/']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      database:
+        condition: service_started
 
   products:
     build:
-      context: ./backend
+      <<: *common-backend-build
       dockerfile: ./apps/products/Dockerfile
-      target: dev
     hostname: products
     container_name: products_service
     env_file:
       - ./backend/apps/products/.env.development.local
-    volumes:
-      - ./backend:/usr/src/app:cached
-      - /usr/src/app/node_modules
+    volumes: *common-volumes
+    ports:
+      - 3001:3001
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
-      - database
+      database:
+        condition: service_started
+
+  gateway:
+    build:
+      <<: *common-backend-build
+      dockerfile: ./apps/gateway/Dockerfile
+    hostname: gateway
+    container_name: gateway_service
+    env_file:
+      - ./backend/apps/gateway/.env.development.local
+    volumes: *common-volumes
+    depends_on:
+      products:
+        condition: service_healthy
 
   frontend:
     build:
@@ -55,12 +139,18 @@ services:
     hostname: frontend
     container_name: frontend
     env_file:
-      - ./frontend/.env.development.local
+      - ./frontend/.env.development
     volumes:
       - ./frontend:/usr/src/app:cached
       - /usr/src/app/node_modules
     depends_on:
-      - products
+      gateway:
+        condition: service_started
+      notifications:
+        condition: service_started
+      auth:
+        condition: service_started
 
 volumes:
   pgdata:
+  rabbitmqdata:
